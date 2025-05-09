@@ -27,6 +27,10 @@ use crate::{Domain, Protocol, SockAddr, TcpKeepalive, Type};
 #[cfg(not(target_os = "redox"))]
 use crate::{MaybeUninitSlice, MsgHdr, RecvFlags};
 
+define_mmsg_if_supported! {
+    use crate::{MMsgHdr, MMsgHdrMut};
+}
+
 /// Owned wrapper around a system socket.
 ///
 /// This type simply wraps an instance of a file descriptor (`c_int`) on Unix
@@ -2195,6 +2199,29 @@ impl Socket {
     ))]
     pub fn original_dst_ipv6(&self) -> io::Result<SockAddr> {
         sys::original_dst_ipv6(self.as_raw())
+    }
+}
+
+/// Platform-specific methods.
+#[cfg(feature = "all")]
+impl Socket {
+    define_mmsg_if_supported! {
+        /// Receive multiple messages on a socket using a single system call.
+        #[doc = man_links!(unix: recvmmsg(2))]
+        pub fn recvmmsg(
+            &self,
+            msgvec: &mut [MMsgHdrMut<'_, '_, '_>],
+            flags: c_int,
+            timeout: Option<Duration>,
+        ) -> io::Result<usize> {
+            sys::recvmmsg(self.as_raw(), msgvec, flags, timeout)
+        }
+
+        /// Send multiple messages on a socket using a single system call.
+        #[doc = man_links!(unix: sendmmsg(2))]
+        pub fn sendmmsg(&self, msgvec: &mut [MMsgHdr<'_, '_, '_>], flags: c_int) -> io::Result<usize> {
+            sys::sendmmsg(self.as_raw(), msgvec, flags)
+        }
     }
 }
 

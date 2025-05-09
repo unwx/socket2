@@ -172,6 +172,24 @@ macro_rules! man_links {
     };
 }
 
+macro_rules! define_mmsg_if_supported {
+    ($($item:item)*) => {
+        $(
+            #[cfg(all(
+                feature = "all",
+                any(
+                    target_os = "linux",
+                    target_os = "android",
+                    target_os = "freebsd",
+                    target_os = "fuchsia",
+                    target_os = "netbsd",
+                )
+            ))]
+            $item
+        )*
+    };
+}
+
 mod sockaddr;
 mod socket;
 mod sockref;
@@ -695,5 +713,115 @@ impl<'addr, 'bufs, 'control> MsgHdrMut<'addr, 'bufs, 'control> {
 impl<'name, 'bufs, 'control> fmt::Debug for MsgHdrMut<'name, 'bufs, 'control> {
     fn fmt(&self, fmt: &mut fmt::Formatter<'_>) -> fmt::Result {
         "MsgHdrMut".fmt(fmt)
+    }
+}
+
+define_mmsg_if_supported! {
+    /// Wraps `mmsghdr` on Unix for a `sendmmsg(2)` system call.
+    ///
+    /// Also see [`MsgHdr`] for the variant used by `sendmsg(2)`.
+    #[repr(transparent)]
+    pub struct MMsgHdr<'addr, 'bufs, 'control> {
+        inner: sys::mmsghdr,
+        #[allow(clippy::type_complexity)]
+        _lifetimes: PhantomData<(&'addr SockAddr, &'bufs IoSlice<'bufs>, &'control [u8])>,
+    }
+
+    impl<'addr, 'bufs, 'control> MMsgHdr<'addr, 'bufs, 'control> {
+        /// Create a new `MMsgHdr` from `MsgHdr` and with the `msg_len` set to zero.
+        pub fn new(msg: MsgHdr<'_, '_, '_>) -> Self {
+            Self {
+                inner: sys::mmsghdr {
+                    msg_hdr: msg.inner,
+                    msg_len: 0,
+                },
+                _lifetimes: PhantomData,
+            }
+        }
+
+        /// Number of bytes transmitted.
+        pub fn len(&self) -> u32 {
+            // `msg_len` is `c_uint` on most targets,
+            // but `ssize_t` on FreeBSD.
+            let length = self.inner.msg_len as i64;
+            length.clamp(0, u32::MAX as i64) as u32
+        }
+    }
+
+    impl<'addr, 'bufs, 'control> From<MsgHdr<'addr, 'bufs, 'control>>
+        for MMsgHdr<'addr, 'bufs, 'control>
+    {
+        fn from(value: MsgHdr<'_, '_, '_>) -> Self {
+            Self::new(value)
+        }
+    }
+
+    impl<'addr, 'bufs, 'control> fmt::Debug for MMsgHdr<'addr, 'bufs, 'control> {
+        fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+            write!(f, "MMsgHdr({})", self.len())
+        }
+    }
+
+    /// Wraps `mmsghdr` on Unix for a `recvmmsg(2)` system call.
+    ///
+    /// Also see [`MsgHdrMut`] for the variant used by `recvmsg(2)`.
+    #[repr(transparent)]
+    pub struct MMsgHdrMut<'addr, 'bufs, 'control> {
+        inner: sys::mmsghdr,
+        #[allow(clippy::type_complexity)]
+        _lifetimes: PhantomData<(
+            &'addr mut SockAddr,
+            &'bufs mut MaybeUninitSlice<'bufs>,
+            &'control mut [u8],
+        )>,
+    }
+
+    impl<'addr, 'bufs, 'control> MMsgHdrMut<'addr, 'bufs, 'control> {
+        /// Create a new `MMsgHdrMut` from `MsgHdrMut` and with the `msg_len` set to zero.
+        pub fn new(msg: MsgHdrMut<'_, '_, '_>) -> Self {
+            Self {
+                inner: sys::mmsghdr {
+                    msg_hdr: msg.inner,
+                    msg_len: 0,
+                },
+                _lifetimes: PhantomData,
+            }
+        }
+
+        /// Number of received bytes.
+        pub fn len(&self) -> u32 {
+            // `msg_len` is `c_uint` on most targets,
+            // but `ssize_t` on FreeBSD.
+            let length = self.inner.msg_len as i64;
+            length.clamp(0, u32::MAX as i64) as u32
+        }
+
+        /// Returns the flags of the message.
+        pub fn flags(&self) -> RecvFlags {
+            sys::msghdr_flags(&self.inner.msg_hdr)
+        }
+
+        /// Gets the length of the control buffer.
+        ///
+        /// Can be used to determine how much, if any, of the control buffer was filled by `recvmsg`.
+        ///
+        /// Corresponds to `msg_controllen` on Unix and `Control.len` on Windows.
+        pub fn control_len(&self) -> usize {
+            sys::msghdr_control_len(&self.inner.msg_hdr)
+        }
+    }
+
+    impl<'addr, 'bufs, 'control> From<MsgHdrMut<'addr, 'bufs, 'control>>
+        for MMsgHdrMut<'addr, 'bufs, 'control>
+    {
+        fn from(value: MsgHdrMut<'_, '_, '_>) -> Self {
+            Self::new(value)
+        }
+    }
+
+    impl<'addr, 'bufs, 'control> fmt::Debug for MMsgHdrMut<'addr, 'bufs, 'control> {
+        fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+            write!(f, "MMsgHdrMut({})", self.len())
+        }
     }
 }
